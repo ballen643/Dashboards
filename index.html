@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Help Desk Dashboard - 2D Charts & Filters</title>
+<script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+<style>
+  @font-face {
+    font-family: 'Aptos';
+    src: local('Aptos'), local('Aptos-Regular');
+  }
+  body {
+    font-family: 'Aptos', sans-serif;
+    margin: 20px;
+    background: linear-gradient(135deg, #d4f1f9, #a9e4f5);
+    color: #003344;
+  }
+  h1 {
+    text-align: center;
+    color: #003344;
+    text-shadow: 1px 1px 3px rgba(255,255,255,0.6);
+  }
+  .chart-container {
+    background: rgba(255, 255, 255, 0.15);
+    border-radius: 20px;
+    padding: 20px;
+    margin: 20px auto;
+    width: 40%;
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    box-shadow: 0 4px 30px rgba(0, 0, 0, 0.1);
+    border: 1px solid rgba(255, 255, 255, 0.3);
+  }
+  .filter-container {
+    background: rgba(255, 255, 255, 0.15);
+    padding: 10px;
+    border-radius: 20px;
+    margin-bottom: 20px;
+    width: 80%;
+    max-width: 900px;
+    margin-left: auto;
+    margin-right: auto;
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    box-shadow: 0 4px 30px rgba(0, 0, 0, 0.1);
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    color: #003344;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    align-items: center;
+  }
+  label {
+    margin-right: 5px;
+    font-weight: bold;
+  }
+  select, input[type=date] {
+    margin-right: 20px;
+    padding: 5px;
+    border-radius: 5px;
+    border: none;
+    min-width: 120px;
+  }
+  input[type=file] {
+    display: block;
+    margin: 10px auto 30px auto;
+    padding: 10px;
+    border-radius: 10px;
+    border: none;
+    background: rgba(255,255,255,0.6);
+    color: #003344;
+    font-weight: bold;
+    cursor: pointer;
+  }
+</style>
+</head>
+<body>
+<h1>Help Desk Performance Dashboard</h1>
+<input type="file" id="fileInput" accept="application/json" />
+
+<div class="filter-container">
+  <label for="productFilter">Product:</label>
+  <select id="productFilter"><option value="">All</option></select>
+
+  <label for="topicFilter">Topic:</label>
+  <select id="topicFilter"><option value="">All</option></select>
+
+  <label for="agentFilter">Agent:</label>
+  <select id="agentFilter"><option value="">All</option></select>
+
+  <label for="patientFilter">Patient LH:</label>
+  <select id="patientFilter"><option value="">All</option></select>
+
+  <label for="startDate">Start Date:</label>
+  <input type="date" id="startDate" />
+
+  <label for="endDate">End Date:</label>
+  <input type="date" id="endDate" />
+</div>
+
+<div id="charts">
+  <div id="callVolume" class="chart-container"></div>
+  <div id="callsByProduct" class="chart-container"></div>
+  <div id="callsByTopic" class="chart-container"></div>
+  <div id="agentPerformance" class="chart-container"></div>
+  <div id="resolutionRate" class="chart-container"></div>
+</div>
+
+<script>
+let allCalls = [];
+
+function fillDropdown(id, items) {
+  const select = document.getElementById(id);
+  select.innerHTML = '<option value="">All</option>';
+  [...items].sort().forEach(item => {
+    const option = document.createElement('option');
+    option.value = item;
+    option.textContent = item;
+    select.appendChild(option);
+  });
+}
+
+function populateFilters(calls) {
+  const products = new Set();
+  const topics = new Set();
+  const agents = new Set();
+  const patients = new Set();
+
+  calls.forEach(call => {
+    if (call["Product"]) products.add(call["Product"]);
+    if (call["Call topic (select all that apply)"]) topics.add(call["Call topic (select all that apply)"]);
+    const agent = call["Name of the agent that called you (if not listed above):"] ||
+                  call["Name of the agent that called you (if not in this list, add name in Question 2)"];
+    if (agent) agents.add(agent);
+    if (call["Patient LH:"]) patients.add(call["Patient LH:"]);
+  });
+
+  fillDropdown("productFilter", products);
+  fillDropdown("topicFilter", topics);
+  fillDropdown("agentFilter", agents);
+  fillDropdown("patientFilter", patients);
+}
+
+function applyFilters() {
+  const productVal = document.getElementById("productFilter").value;
+  const topicVal = document.getElementById("topicFilter").value;
+  const agentVal = document.getElementById("agentFilter").value;
+  const patientVal = document.getElementById("patientFilter").value;
+  const startDateVal = document.getElementById("startDate").value;
+  const endDateVal = document.getElementById("endDate").value;
+
+  return allCalls.filter(call => {
+    const callDate = call["Start time"] ? new Date(call["Start time"]) : null;
+    const agent = call["Name of the agent that called you (if not listed above):"] ||
+                  call["Name of the agent that called you (if not in this list, add name in Question 2)"];
+    const patient = call["Patient LH:"] || "";
+
+    const afterStart = startDateVal ? (callDate && callDate >= new Date(startDateVal)) : true;
+    const beforeEnd = endDateVal ? (callDate && callDate <= new Date(endDateVal)) : true;
+
+    return (!productVal || call["Product"] === productVal) &&
+           (!topicVal || call["Call topic (select all that apply)"] === topicVal) &&
+           (!agentVal || agent === agentVal) &&
+           (!patientVal || patient === patientVal) &&
+           afterStart &&
+           beforeEnd;
+  });
+}
+
+function plotCharts(calls) {
+  // Call Volume Over Time - Bar chart
+  const volumeMap = {};
+  calls.forEach(call => {
+    const dateStr = call["Start time"] ? new Date(call["Start time"]).toLocaleDateString() : "Unknown";
+    volumeMap[dateStr] = (volumeMap[dateStr] || 0) + 1;
+  });
+  const dates = Object.keys(volumeMap);
+  const counts = Object.values(volumeMap);
+  Plotly.newPlot('callVolume', [{
+    x: dates,
+    y: counts,
+    type: 'bar',
+    marker: {color: '#4287f5'}
+  }], {title: 'Call Volume Over Time', margin: {t:40}});
+
+  // Calls by Product - Bar chart
+  const productMap = {};
+  calls.forEach(call => {
+    const product = call["Product"] || "Unknown";
+    productMap[product] = (productMap[product] || 0) + 1;
+  });
+  const productKeys = Object.keys(productMap);
+  const productCounts = Object.values(productMap);
+  Plotly.newPlot('callsByProduct', [{
+    x: productKeys,
+    y: productCounts,
+    type: 'bar',
+    marker: {color: '#f5a142'}
+  }], {title: 'Calls by Product', margin: {t:40}});
+
+  // Calls by Topic - Bar chart
+  const topicMap = {};
+  calls.forEach(call => {
+    const topic = call["Call topic (select all that apply)"] || "Unknown";
+    topicMap[topic] = (topicMap[topic] || 0) + 1;
+  });
+  const topicKeys = Object.keys(topicMap);
+  const topicCounts = Object.values(topicMap);
+  Plotly.newPlot('callsByTopic', [{
+    x: topicKeys,
+    y: topicCounts,
+    type: 'bar',
+    marker: {color: '#42f554'}
+  }], {title: 'Calls by Topic', margin: {t:40}});
+
+  // Agent Performance - Bar chart
+  const agentMap = {};
+  calls.forEach(call => {
+    const agent = call["Name of the agent that called you (if not listed above):"] ||
+                  call["Name of the agent that called you (if not in this list, add name in Question 2)"] || "Unknown";
+    agentMap[agent] = (agentMap[agent] || 0) + 1;
+  });
+  const agentKeys = Object.keys(agentMap);
+  const agentCounts = Object.values(agentMap);
+  Plotly.newPlot('agentPerformance', [{
+    x: agentKeys,
+    y: agentCounts,
+    type: 'bar',
+    marker: {color: '#a142f5'}
+  }], {title: 'Agent Performance (Calls Handled)', margin: {t:40}});
+
+  // Resolution Rate - Pie chart
+  let yesCount = 0, noCount = 0;
+  calls.forEach(call => {
+    const response = (call["Do you feel like you were able to assist the agent you spoke with?"] || "").toLowerCase();
+    if (response === "yes") yesCount++;
+    else if (response === "no") noCount++;
+  });
+  Plotly.newPlot('resolutionRate', [{
+    labels: ['Yes', 'No'],
+    values: [yesCount, noCount],
+    type: 'pie',
+    marker: { colors: ['#4CAF50', '#F44336'] }
+  }], {title: 'Resolution Rate', margin: {t:40}});
+}
+
+function processData(data) {
+  allCalls = Array.isArray(data) ? data : [data];
+  populateFilters(allCalls);
+  plotCharts(allCalls);
+
+  ["productFilter","topicFilter","agentFilter","patientFilter","startDate","endDate"].forEach(id => {
+    document.getElementById(id).addEventListener("change", () => plotCharts(applyFilters()));
+  });
+}
+
+document.getElementById('fileInput').addEventListener('change', function(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = function(e) {
+    try {
+      const json = JSON.parse(e.target.result);
+      processData(json);
+    } catch (err) {
+      alert('Invalid JSON file.');
+    }
+  };
+  reader.readAsText(file);
+});
+</script>
+</body>
+</html>
+
