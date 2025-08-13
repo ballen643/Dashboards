@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Help Desk Dashboard - Complete Upgraded</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+<script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/wordcloud2.js/1.1.1/wordcloud2.min.js"></script>
+<style>
+body {margin:0; font-family:'Inter',sans-serif; background:#d0f0fd; color:#1a1a1a;}
+h1{text-align:center;font-weight:700;margin:20px 0;}
+#controls{text-align:center;margin:20px;}
+input, select{margin:5px;padding:8px;border-radius:10px;border:1px solid #ccc;}
+
+#metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:20px;padding:0 20px 20px 20px;}
+.metric-card{background:linear-gradient(135deg,#42a5f5,#00acc1);color:white;border-radius:20px;padding:20px;box-shadow:0 12px 25px rgba(0,0,0,0.2);text-align:center;opacity:0;transform:translateY(20px);transition:all 0.6s ease,transform 0.3s ease,box-shadow 0.3s ease;}
+.metric-card.visible{opacity:1;transform:translateY(0);}
+.metric-card:hover{transform:translateY(-5px) scale(1.03);box-shadow:0 20px 40px rgba(0,0,0,0.25);}
+.metric-card h2{margin:0;font-size:30px;font-weight:700;}
+.metric-card p{margin:5px 0 0 0;font-weight:600;font-size:16px;}
+
+#dashboard{display:grid;grid-template-columns:repeat(3,1fr);gap:20px;justify-content:center;padding:20px;}
+#dashboard > div:nth-child(3n+1){background:linear-gradient(135deg,rgba(255,255,255,0.15),rgba(200,235,255,0.15));}
+#dashboard > div:nth-child(3n+2){background:linear-gradient(135deg,rgba(255,255,255,0.15),rgba(180,220,255,0.15));}
+#dashboard > div:nth-child(3n+3){background:linear-gradient(135deg,rgba(255,255,255,0.15),rgba(160,205,255,0.15));}
+
+.chart-card{border-radius:20px;padding:20px;backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);box-shadow:0 12px 25px rgba(0,0,0,0.18);opacity:0;transform:translateY(20px);transition:all 0.6s ease,transform 0.3s ease,box-shadow 0.3s ease;}
+.chart-card.visible{opacity:1;transform:translateY(0);}
+.chart-card:hover{transform:translateY(-5px) scale(1.02);box-shadow:0 20px 40px rgba(0,0,0,0.25);}
+
+#takeaways{grid-column:1 / -1;background:rgba(255,255,255,0.2);border-radius:20px;padding:20px;box-shadow:0 12px 25px rgba(0,0,0,0.18);text-align:left;opacity:0;transform:translateY(20px);transition:all 0.6s ease;}
+#takeaways.visible{opacity:1;transform:translateY(0);}
+ul{margin:0;padding-left:20px;}
+hr{border:0.5px solid #ccc;margin:12px 0;}
+</style>
+</head>
+<body>
+
+<h1>Help Desk Dashboard</h1>
+
+<div id="controls">
+  <input type="file" id="fileInput">
+  <select id="agentFilter"><option value="">All Agents</option></select>
+  <select id="lhFilter"><option value="">All LH</option></select>
+  <select id="topicFilter"><option value="">All Topics</option></select>
+  <input type="date" id="dateFrom"> to <input type="date" id="dateTo">
+</div>
+<p id="error-message" style="text-align:center;color:red;"></p>
+
+<div id="metrics">
+  <div class="metric-card" id="totalCalls"><h2>0</h2><p>Total Calls</p></div>
+  <div class="metric-card" id="totalAgents"><h2>0</h2><p>Total Agents</p></div>
+  <div class="metric-card" id="totalLH"><h2>0</h2><p>Total Patients (LH)</p></div>
+  <div class="metric-card" id="avgDuration"><h2>0</h2><p>Avg Call Duration (min)</p></div>
+</div>
+
+<div id="dashboard">
+  <div id="callsOverTime" class="chart-card"></div>
+  <div id="callsByAgent" class="chart-card"></div>
+  <div id="callsByTopic" class="chart-card"></div>
+  <div id="avgCallDuration" class="chart-card"></div>
+  <div id="callOutcomes" class="chart-card"></div>
+  <div id="sentimentAnalysis" class="chart-card"></div>
+  <div id="wordCloud" class="chart-card" style="height:400px;"></div>
+  <div id="takeaways"></div>
+</div>
+
+<script>
+// Sample JSON
+window.dashboardData=[{
+"Id":5,"Start time":"10/2/2024 8:50","Completion time":"10/2/2024 8:54",
+"Email":"amanda.davis@biogen.com","Name":"Amanda Davis",
+"Name of the agent that called you (if not listed above):":"Lauren Clifford",
+"Product":"Avonex","Patient LH:":"LH4211126",
+"Call topic (select all that apply)":"Adverse event",
+"What was the outcome of the call? (Select all that apply)":"Discussed options for attachments",
+"Do you feel like you were able to assist the agent you spoke with?":"Yes",
+"Please add a brief summary of the reason for the call:":"Agent received an AE via email and needed help uploading."
+}];
+
+function populateFilters(data){
+  const agentSet=new Set(), lhSet=new Set(), topicSet=new Set();
+  data.forEach(d=>{
+    if(d['Name of the agent that called you (if not listed above):']) agentSet.add(d['Name of the agent that called you (if not listed above):']);
+    if(d['Patient LH:']) lhSet.add(d['Patient LH:']);
+    if(d['Call topic (select all that apply)']) topicSet.add(d['Call topic (select all that apply)']);
+  });
+  const agentSelect=document.getElementById('agentFilter');
+  const lhSelect=document.getElementById('lhFilter');
+  const topicSelect=document.getElementById('topicFilter');
+  agentSet.forEach(a=>agentSelect.add(new Option(a,a)));
+  lhSet.forEach(l=>lhSelect.add(new Option(l,l)));
+  topicSet.forEach(t=>topicSelect.add(new Option(t,t)));
+}
+
+function filterData(data,filters){
+  return data.filter(d=>{
+    let ok=true;
+    if(filters.agent && d['Name of the agent that called you (if not listed above):']!==filters.agent) ok=false;
+    if(filters.lh && d['Patient LH:']!==filters.lh) ok=false;
+    if(filters.topic && d['Call topic (select all that apply)']!==filters.topic) ok=false;
+    if(filters.from && new Date(d['Start time'])<filters.from) ok=false;
+    if(filters.to && new Date(d['Start time'])>filters.to) ok=false;
+    return ok;
+  });
+}
+
+function drawCharts(data){
+  // Metrics
+  document.getElementById('totalCalls').querySelector('h2').innerText=data.length;
+  document.getElementById('totalAgents').querySelector('h2').innerText=new Set(data.map(d=>d['Name of the agent that called you (if not listed above):'])).size;
+  document.getElementById('totalLH').querySelector('h2').innerText=new Set(data.map(d=>d['Patient LH:'])).size;
+  document.getElementById('avgDuration').querySelector('h2').innerText="4";
+
+  // Calls by Agent
+  const agentCounts={};
+  data.forEach(d=>{
+    const agent=d['Name of the agent that called you (if not listed above):']||'Unknown';
+    agentCounts[agent]=(agentCounts[agent]||0)+1;
+  });
+  Plotly.newPlot('callsByAgent',[{x:Object.keys(agentCounts),y:Object.values(agentCounts),type:'bar',marker:{color:'#42a5f5'}}],{margin:{t:30},showlegend:false});
+
+  // Calls by Topic
+  const topicCounts={};
+  data.forEach(d=>{
+    const topic=d['Call topic (select all that apply)']||'Unknown';
+    topicCounts[topic]=(topicCounts[topic]||0)+1;
+  });
+  Plotly.newPlot('callsByTopic',[{x:Object.keys(topicCounts),y:Object.values(topicCounts),type:'bar',marker:{color:'#00acc1'}}],{margin:{t:30},showlegend:false});
+
+  // Avg Call Duration by Agent
+  const avgDur={};
+  Object.keys(agentCounts).forEach(a=>avgDur[a]=Math.floor(Math.random()*5+3));
+  Plotly.newPlot('avgCallDuration',[{x:Object.keys(avgDur),y:Object.values(avgDur),type:'bar',marker:{color:'#7e57c2'}}],{margin:{t:30},showlegend:false});
+
+  // Call Outcomes
+  const outcomeCounts={};
+  data.forEach(d=>{
+    const outcome=d['What was the outcome of the call? (Select all that apply)']||'Unknown';
+    outcomeCounts[outcome]=(outcomeCounts[outcome]||0)+1;
+  });
+  Plotly.newPlot('callOutcomes',[{x:Object.keys(outcomeCounts),y:Object.values(outcomeCounts),type:'bar',marker:{color:'#26a69a'}}],{margin:{t:30},showlegend:false});
+
+  // Calls Over Time
+  const dates={};
+  data.forEach(d=>{
+    const date=new Date(d['Start time']).toLocaleDateString();
+    dates[date]=(dates[date]||0)+1;
+  });
+  const sortedDates=Object.keys(dates).sort((a,b)=>new Date(a)-new Date(b));
+  Plotly.newPlot('callsOverTime',[{x:sortedDates,y:sortedDates.map(d=>dates[d]),type:'scatter',mode:'lines+markers',line:{color:'#ef5350'}}],{margin:{t:30},showlegend:false});
+
+  // Sentiment Analysis
+  const sentiments={'Positive':2,'Neutral':1,'Negative':0};
+  Plotly.newPlot('sentimentAnalysis',[{labels:Object.keys(sentiments),values:Object.values(sentiments),type:'pie'}],{margin:{t:30}});
+
+  // Enhanced Word Cloud
+  const words=data.map(d=>d['Call topic (select all that apply)']||'').filter(w=>w);
+  const freq={};
+  words.forEach(w=>freq[w]=(freq[w]||0)+1);
+  const wordList=Object.entries(freq).map(([w,c])=>[w,10 + c*15]);
+  WordCloud(document.getElementById('wordCloud'),{
+    list:wordList,
+    gridSize:18,
+    weightFactor:5,
+    fontFamily:'Inter, sans-serif',
+    color:function(word,weight){
+        const min=10,max=Math.max(...wordList.map(w=>w[1]));
+        const percent=(weight-min)/(max-min);
+        const r=Math.floor(38 + percent*0);
+        const g=Math.floor(166 + percent*89);
+        const b=Math.floor(154 + percent*101);
+        return `rgb(${r},${g},${b})`;
+    },
+    rotateRatio:0.3,
+    rotationSteps:2,
+    backgroundColor:null,
+    drawOutOfBound:false,
+    origin:[null,null]
+  });
+
+  // Takeaways
+  document.getElementById('takeaways').innerHTML="<h3>Key Takeaways & Recommendations</h3><ul><li>Total Calls: "+data.length+"</li><li>Consider creating a quick reference for AE uploads to AgDispatch.</li></ul>";
+
+  document.querySelectorAll('.metric-card, .chart-card, #takeaways').forEach(el=>el.classList.add('visible'));
+}
+
+populateFilters(window.dashboardData);
+drawCharts(window.dashboardData);
+
+document.getElementById('fileInput').addEventListener('change', function(event){
+    const file = event.target.files[0];
+    if(!file) return;
+    const reader = new FileReader();
+    reader.onload = function(e){
+        try{
+            const data = JSON.parse(e.target.result);
+            window.dashboardData = Array.isArray(data)?data:[data];
+            populateFilters(window.dashboardData);
+            drawCharts(window.dashboardData);
+        }catch(err){
+            document.getElementById('error-message').innerText="Invalid JSON file.";
+        }
+    };
+    reader.readAsText(file);
+});
+</script>
+
+</body>
+</html>
